@@ -1,0 +1,642 @@
+substitutions:
+  name: "rafmagnsmaelir"
+
+esphome:
+  name: "${name}"
+  friendly_name: "${name}"
+  
+
+esp8266:
+  board: d1
+
+logger:
+  baud_rate: 0
+  esp8266_store_log_strings_in_flash: false
+  level: DEBUG
+
+api:
+  encryption:
+    key: "XXXXX"
+
+ota:
+  - platform: esphome
+    password: "XXXXXX"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  domain: .exmaple.com
+  min_auth_mode: WPA2
+
+  ap:
+    ssid: "Rafmagnsmaelir Fallback Hotspot"
+    password: "rcIjGKSUvnr4"
+
+captive_portal:
+
+web_server:
+  port: 80
+
+switch:
+  - platform: gpio
+    name: "P1 Request Trigger"
+    pin: D5
+    id: p1_request
+
+  - platform: restart
+    name: "Restart device"
+
+interval:
+  - interval: 30s
+    then:
+      - switch.turn_on: p1_request
+      - delay: 50ms
+      - switch.turn_off: p1_request
+
+uart:
+  id: uart_bus
+  rx_pin: D7
+  rx_buffer_size: 3072
+  baud_rate: 9600
+  data_bits: 7
+  parity: NONE
+  stop_bits: 1
+  debug:
+    direction: RX
+    dummy_receiver: true
+    after:
+      timeout: 500ms
+    sequence:
+      - lambda: |-
+          std::string chunk(bytes.begin(), bytes.end());
+          id(p1_buffer) += chunk;
+
+          auto extract_numeric = [](const std::string &telegram, const std::string &key, float &out) -> bool {
+            size_t p = telegram.find(key);
+            if (p == std::string::npos) return false;
+            p += key.size();
+            size_t end = telegram.find_first_of("*)", p);
+            if (end == std::string::npos || end <= p) return false;
+            std::string s = telegram.substr(p, end - p);
+            out = atof(s.c_str());
+            return true;
+          };
+
+          auto &buf = id(p1_buffer);
+
+          size_t slash = buf.find('/');
+          if (slash != std::string::npos && slash > 0) {
+            buf.erase(0, slash);
+          }
+
+          while (true) {
+            size_t end = std::string::npos;
+            size_t marker_len = 0;
+
+            size_t p1 = buf.find("!\r\n");
+            size_t p2 = buf.find("!\n");
+            size_t p3 = buf.find("!");
+
+            if (p1 != std::string::npos) {
+              end = p1;
+              marker_len = 3;
+            } else if (p2 != std::string::npos) {
+              end = p2;
+              marker_len = 2;
+            } else if (p3 != std::string::npos) {
+              end = p3;
+              marker_len = 1;
+            } else {
+              break;
+            }
+
+            std::string telegram = buf.substr(0, end + marker_len);
+            buf.erase(0, end + marker_len);
+
+            if (telegram.find('/') == std::string::npos) {
+              continue;
+            }
+
+            float v = NAN;
+
+            // Totals
+            if (extract_numeric(telegram, "1-0:1.8.0(", v)) {
+              float old_v = id(g_cumulative_active_import);
+              float diff = v - old_v;
+              if (isnan(old_v) || (diff >= -0.0005f && diff <= 0.15f)) {
+                id(g_cumulative_active_import) = v;
+              } else {
+                ESP_LOGW("p1", "Discarded cumulative import jump: old=%.6f new=%.6f diff=%.6f",
+                         old_v, v, diff);
+              }
+            }
+
+            if (extract_numeric(telegram, "1-0:2.8.0(", v)) id(g_cumulative_active_export) = v;
+            if (extract_numeric(telegram, "1-0:3.8.0(", v)) id(g_cumulative_reactive_import) = v;
+            if (extract_numeric(telegram, "1-0:4.8.0(", v)) id(g_cumulative_reactive_export) = v;
+
+            // Total momentary
+            if (extract_numeric(telegram, "1-0:1.7.0(", v)) id(g_momentary_active_import) = v;
+            if (extract_numeric(telegram, "1-0:2.7.0(", v)) id(g_momentary_active_export) = v;
+            if (extract_numeric(telegram, "1-0:3.7.0(", v)) id(g_momentary_reactive_import) = v;
+            if (extract_numeric(telegram, "1-0:4.7.0(", v)) id(g_momentary_reactive_export) = v;
+
+            // Phase 1
+            if (extract_numeric(telegram, "1-0:21.7.0(", v)) id(g_momentary_active_import_l1) = v;
+            if (extract_numeric(telegram, "1-0:22.7.0(", v)) id(g_momentary_active_export_l1) = v;
+            if (extract_numeric(telegram, "1-0:23.7.0(", v)) id(g_momentary_reactive_import_l1) = v;
+            if (extract_numeric(telegram, "1-0:24.7.0(", v)) id(g_momentary_reactive_export_l1) = v;
+            if (extract_numeric(telegram, "1-0:31.7.0(", v)) id(g_current_l1) = v;
+            if (extract_numeric(telegram, "1-0:32.7.0(", v)) id(g_voltage_l1) = v;
+
+            // Phase 2
+            if (extract_numeric(telegram, "1-0:41.7.0(", v)) id(g_momentary_active_import_l2) = v;
+            if (extract_numeric(telegram, "1-0:42.7.0(", v)) id(g_momentary_active_export_l2) = v;
+            if (extract_numeric(telegram, "1-0:43.7.0(", v)) id(g_momentary_reactive_import_l2) = v;
+            if (extract_numeric(telegram, "1-0:44.7.0(", v)) id(g_momentary_reactive_export_l2) = v;
+            if (extract_numeric(telegram, "1-0:51.7.0(", v)) id(g_current_l2) = v;
+            if (extract_numeric(telegram, "1-0:52.7.0(", v)) id(g_voltage_l2) = v;
+
+            // Phase 3
+            if (extract_numeric(telegram, "1-0:61.7.0(", v)) id(g_momentary_active_import_l3) = v;
+            if (extract_numeric(telegram, "1-0:62.7.0(", v)) id(g_momentary_active_export_l3) = v;
+            if (extract_numeric(telegram, "1-0:63.7.0(", v)) id(g_momentary_reactive_import_l3) = v;
+            if (extract_numeric(telegram, "1-0:64.7.0(", v)) id(g_momentary_reactive_export_l3) = v;
+            if (extract_numeric(telegram, "1-0:71.7.0(", v)) id(g_current_l3) = v;
+            if (extract_numeric(telegram, "1-0:72.7.0(", v)) id(g_voltage_l3) = v;
+
+            // Water / heat
+            if (extract_numeric(telegram, "0-1:24.2.1(", v)) {
+              float old_v = id(g_hot_water_volume);
+              float diff = v - old_v;
+              if (isnan(old_v) || (diff >= -0.0005f && diff <= 0.03f)) {
+                id(g_hot_water_volume) = v;
+              } else {
+                ESP_LOGW("p1", "Discarded hot water volume jump: old=%.6f new=%.6f diff=%.6f",
+                         old_v, v, diff);
+              }
+            }
+
+            if (extract_numeric(telegram, "0-1:24.2.2(", v)) id(g_hot_water_flow_rate) = v;
+            if (extract_numeric(telegram, "0-1:24.2.3(", v)) id(g_inlet_water_temperature) = v;
+            if (extract_numeric(telegram, "0-1:24.2.4(", v)) id(g_outlet_water_temperature) = v;
+            if (extract_numeric(telegram, "0-1:24.2.5(", v)) id(g_energy_content_volume) = v;
+            if (extract_numeric(telegram, "0-1:24.2.6(", v)) id(g_energy_flow_rate) = v;
+
+            // Meter ID
+            if (extract_numeric(telegram, "0-0:96.1.0(", v)) id(g_meter_id) = v;
+
+            ESP_LOGD(
+              "p1",
+              "parsed import=%.3f kWh power=%.3f kW volt_l1=%.1f V current_l1=%.1f A water=%.3f m3 flow=%.3f m3/h meter=%.0f",
+              id(g_cumulative_active_import),
+              id(g_momentary_active_import),
+              id(g_voltage_l1),
+              id(g_current_l1),
+              id(g_hot_water_volume),
+              id(g_hot_water_flow_rate),
+              id(g_meter_id)
+            );
+          }
+
+globals:
+  - id: p1_buffer
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+  - id: g_cumulative_active_import
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_cumulative_active_export
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_cumulative_reactive_import
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_cumulative_reactive_export
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+
+  - id: g_momentary_active_import
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_momentary_active_export
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_momentary_reactive_import
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_momentary_reactive_export
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+
+  - id: g_momentary_active_import_l1
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_momentary_active_export_l1
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_momentary_reactive_import_l1
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_momentary_reactive_export_l1
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_voltage_l1
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_current_l1
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+
+  - id: g_momentary_active_import_l2
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_momentary_active_export_l2
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_momentary_reactive_import_l2
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_momentary_reactive_export_l2
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_voltage_l2
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_current_l2
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+
+  - id: g_momentary_active_import_l3
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_momentary_active_export_l3
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_momentary_reactive_import_l3
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_momentary_reactive_export_l3
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_voltage_l3
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_current_l3
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+
+  - id: g_hot_water_volume
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_hot_water_flow_rate
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_inlet_water_temperature
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_outlet_water_temperature
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_energy_content_volume
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_energy_flow_rate
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+
+  - id: g_meter_id
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+
+  - platform: wifi_signal
+    name: "Wi-Fi Signal"
+    update_interval: 30s
+
+  - platform: template
+    name: "Cumulative Active Import"
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    state_class: total_increasing
+    device_class: energy
+    lambda: return id(g_cumulative_active_import);
+    update_interval: 30s
+
+  - platform: template
+    name: "Cumulative Active Export"
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    state_class: total_increasing
+    device_class: energy
+    lambda: return id(g_cumulative_active_export);
+    update_interval: 30s
+
+  - platform: template
+    name: "Cumulative Reactive Import"
+    unit_of_measurement: kvarh
+    accuracy_decimals: 3
+    lambda: return id(g_cumulative_reactive_import);
+    update_interval: 30s
+
+  - platform: template
+    name: "Cumulative Reactive Export"
+    unit_of_measurement: kvarh
+    accuracy_decimals: 3
+    lambda: return id(g_cumulative_reactive_export);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Active Import"
+    unit_of_measurement: kW
+    accuracy_decimals: 3
+    state_class: measurement
+    device_class: power
+    lambda: return id(g_momentary_active_import);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Active Export"
+    unit_of_measurement: kW
+    accuracy_decimals: 3
+    state_class: measurement
+    device_class: power
+    lambda: return id(g_momentary_active_export);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Reactive Import"
+    unit_of_measurement: kvar
+    accuracy_decimals: 3
+    lambda: return id(g_momentary_reactive_import);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Reactive Export"
+    unit_of_measurement: kvar
+    accuracy_decimals: 3
+    lambda: return id(g_momentary_reactive_export);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Active Import Phase 1"
+    unit_of_measurement: kW
+    accuracy_decimals: 3
+    state_class: measurement
+    device_class: power
+    lambda: return id(g_momentary_active_import_l1);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Active Export Phase 1"
+    unit_of_measurement: kW
+    accuracy_decimals: 3
+    state_class: measurement
+    device_class: power
+    lambda: return id(g_momentary_active_export_l1);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Active Import Phase 2"
+    unit_of_measurement: kW
+    accuracy_decimals: 3
+    state_class: measurement
+    device_class: power
+    lambda: return id(g_momentary_active_import_l2);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Active Export Phase 2"
+    unit_of_measurement: kW
+    accuracy_decimals: 3
+    state_class: measurement
+    device_class: power
+    lambda: return id(g_momentary_active_export_l2);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Active Import Phase 3"
+    unit_of_measurement: kW
+    accuracy_decimals: 3
+    state_class: measurement
+    device_class: power
+    lambda: return id(g_momentary_active_import_l3);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Active Export Phase 3"
+    unit_of_measurement: kW
+    accuracy_decimals: 3
+    state_class: measurement
+    device_class: power
+    lambda: return id(g_momentary_active_export_l3);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Reactive Import Phase 1"
+    unit_of_measurement: kvar
+    accuracy_decimals: 3
+    lambda: return id(g_momentary_reactive_import_l1);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Reactive Export Phase 1"
+    unit_of_measurement: kvar
+    accuracy_decimals: 3
+    lambda: return id(g_momentary_reactive_export_l1);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Reactive Import Phase 2"
+    unit_of_measurement: kvar
+    accuracy_decimals: 3
+    lambda: return id(g_momentary_reactive_import_l2);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Reactive Export Phase 2"
+    unit_of_measurement: kvar
+    accuracy_decimals: 3
+    lambda: return id(g_momentary_reactive_export_l2);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Reactive Import Phase 3"
+    unit_of_measurement: kvar
+    accuracy_decimals: 3
+    lambda: return id(g_momentary_reactive_import_l3);
+    update_interval: 30s
+
+  - platform: template
+    name: "Momentary Reactive Export Phase 3"
+    unit_of_measurement: kvar
+    accuracy_decimals: 3
+    lambda: return id(g_momentary_reactive_export_l3);
+    update_interval: 30s
+
+  - platform: template
+    name: "Voltage Phase 1"
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: voltage
+    lambda: return id(g_voltage_l1);
+    update_interval: 30s
+
+  - platform: template
+    name: "Voltage Phase 2"
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: voltage
+    lambda: return id(g_voltage_l2);
+    update_interval: 30s
+
+  - platform: template
+    name: "Voltage Phase 3"
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: voltage
+    lambda: return id(g_voltage_l3);
+    update_interval: 30s
+
+  - platform: template
+    name: "Current Phase 1"
+    unit_of_measurement: A
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: current
+    lambda: return id(g_current_l1);
+    update_interval: 30s
+
+  - platform: template
+    name: "Current Phase 2"
+    unit_of_measurement: A
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: current
+    lambda: return id(g_current_l2);
+    update_interval: 30s
+
+  - platform: template
+    name: "Current Phase 3"
+    unit_of_measurement: A
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: current
+    lambda: return id(g_current_l3);
+    update_interval: 30s
+
+  - platform: template
+    name: "Hot Water Volume"
+    unit_of_measurement: m³
+    accuracy_decimals: 3
+    state_class: total_increasing
+    device_class: water
+    lambda: return id(g_hot_water_volume);
+    update_interval: 30s
+
+  - platform: template
+    name: "Hot Water Flow Rate"
+    unit_of_measurement: m³/h
+    accuracy_decimals: 3
+    state_class: measurement
+    device_class: volume_flow_rate
+    lambda: return id(g_hot_water_flow_rate);
+    update_interval: 30s
+
+  - platform: template
+    name: "Hot Water Inlet Temperature"
+    unit_of_measurement: °C
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: temperature
+    lambda: return id(g_inlet_water_temperature);
+    update_interval: 30s
+
+  - platform: template
+    name: "Hot Water Outlet Temperature"
+    unit_of_measurement: °C
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: temperature
+    lambda: return id(g_outlet_water_temperature);
+    update_interval: 30s
+
+  - platform: template
+    name: "Hot Water Energy Content Volume"
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    state_class: measurement
+    device_class: energy
+    lambda: return id(g_energy_content_volume);
+    update_interval: 30s
+
+  - platform: template
+    name: "Hot Water Energy Flow Rate"
+    unit_of_measurement: kW
+    accuracy_decimals: 3
+    state_class: measurement
+    device_class: power
+    lambda: return id(g_energy_flow_rate);
+    update_interval: 30s
+
+  - platform: template
+    name: "Meter ID"
+    accuracy_decimals: 0
+    lambda: return id(g_meter_id);
+    update_interval: 30s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "Wi-Fi SSID"
+    bssid:
+      name: "Wi-Fi BSSID"
+    mac_address:
+      name: "Mac Address"
+
+  - platform: version
+    name: "ESPHome Version"
+    hide_timestamp: false
