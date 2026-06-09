@@ -57,8 +57,8 @@ uart:
   id: uart_bus
   rx_pin: D7
   rx_buffer_size: 3072
-  baud_rate: 9600
-  data_bits: 7
+  baud_rate: 115200
+  data_bits: 8
   parity: NONE
   stop_bits: 1
   debug:
