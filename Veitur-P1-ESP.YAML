@@ -4,7 +4,6 @@ substitutions:
 esphome:
   name: "${name}"
   friendly_name: "${name}"
-  
 
 esp8266:
   board: d1
@@ -25,8 +24,9 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  domain: .exmaple.com
+  domain: .example.com
   min_auth_mode: WPA2
+  power_save_mode: none
 
   ap:
     ssid: "Rafmagnsmaelir Fallback Hotspot"
@@ -42,6 +42,7 @@ switch:
     name: "P1 Request Trigger"
     pin: D5
     id: p1_request
+    restore_mode: ALWAYS_OFF
 
   - platform: restart
     name: "Restart device"
@@ -82,6 +83,27 @@ uart:
             return true;
           };
 
+          auto extract_last_numeric = [](const std::string &telegram, const std::string &key, float &out) -> bool {
+            size_t p = telegram.rfind(key);
+            if (p == std::string::npos) return false;
+            p += key.size();
+            size_t end = telegram.find_first_of("*)", p);
+            if (end == std::string::npos || end <= p) return false;
+            std::string s = telegram.substr(p, end - p);
+            out = atof(s.c_str());
+            return true;
+          };
+
+          auto extract_string = [](const std::string &telegram, const std::string &key, std::string &out) -> bool {
+            size_t p = telegram.find(key);
+            if (p == std::string::npos) return false;
+            p += key.size();
+            size_t end = telegram.find(')', p);
+            if (end == std::string::npos || end <= p) return false;
+            out = telegram.substr(p, end - p);
+            return true;
+          };
+
           auto &buf = id(p1_buffer);
 
           size_t slash = buf.find('/');
@@ -117,13 +139,21 @@ uart:
               continue;
             }
 
-            float v = NAN;
+            ESP_LOGD("p1raw", "\n%s", telegram.c_str());
 
-            // Totals
+            float v = NAN;
+            std::string s;
+
+            // General IDs / timestamp
+            if (extract_string(telegram, "0-0:1.0.0(", s)) id(g_telegram_timestamp) = s;
+            if (extract_string(telegram, "0-0:96.1.0(", s)) id(g_meter_id_text) = s;
+            if (extract_string(telegram, "0-1:24.1.0(", s)) id(g_hot_water_meter_id) = s;
+
+            // Cumulative electricity
             if (extract_numeric(telegram, "1-0:1.8.0(", v)) {
               float old_v = id(g_cumulative_active_import);
               float diff = v - old_v;
-              if (isnan(old_v) || (diff >= -0.0005f && diff <= 0.15f)) {
+              if (isnan(old_v) || (diff >= -0.0005f && diff <= 0.20f)) {
                 id(g_cumulative_active_import) = v;
               } else {
                 ESP_LOGW("p1", "Discarded cumulative import jump: old=%.6f new=%.6f diff=%.6f",
@@ -135,9 +165,19 @@ uart:
             if (extract_numeric(telegram, "1-0:3.8.0(", v)) id(g_cumulative_reactive_import) = v;
             if (extract_numeric(telegram, "1-0:4.8.0(", v)) id(g_cumulative_reactive_export) = v;
 
-            // Total momentary
-            if (extract_numeric(telegram, "1-0:1.7.0(", v)) id(g_momentary_active_import) = v;
-            if (extract_numeric(telegram, "1-0:2.7.0(", v)) id(g_momentary_active_export) = v;
+            // Total momentary if present
+            bool have_total_active_import = false;
+            bool have_total_active_export = false;
+
+            if (extract_numeric(telegram, "1-0:1.7.0(", v)) {
+              id(g_momentary_active_import) = v;
+              have_total_active_import = true;
+            }
+            if (extract_numeric(telegram, "1-0:2.7.0(", v)) {
+              id(g_momentary_active_export) = v;
+              have_total_active_export = true;
+            }
+
             if (extract_numeric(telegram, "1-0:3.7.0(", v)) id(g_momentary_reactive_import) = v;
             if (extract_numeric(telegram, "1-0:4.7.0(", v)) id(g_momentary_reactive_export) = v;
 
@@ -165,11 +205,30 @@ uart:
             if (extract_numeric(telegram, "1-0:71.7.0(", v)) id(g_current_l3) = v;
             if (extract_numeric(telegram, "1-0:72.7.0(", v)) id(g_voltage_l3) = v;
 
+            // Fallback totals from phases
+            if (!have_total_active_import) {
+              float sum = 0.0f;
+              bool have = false;
+              if (!isnan(id(g_momentary_active_import_l1))) { sum += id(g_momentary_active_import_l1); have = true; }
+              if (!isnan(id(g_momentary_active_import_l2))) { sum += id(g_momentary_active_import_l2); have = true; }
+              if (!isnan(id(g_momentary_active_import_l3))) { sum += id(g_momentary_active_import_l3); have = true; }
+              if (have) id(g_momentary_active_import) = sum;
+            }
+
+            if (!have_total_active_export) {
+              float sum = 0.0f;
+              bool have = false;
+              if (!isnan(id(g_momentary_active_export_l1))) { sum += id(g_momentary_active_export_l1); have = true; }
+              if (!isnan(id(g_momentary_active_export_l2))) { sum += id(g_momentary_active_export_l2); have = true; }
+              if (!isnan(id(g_momentary_active_export_l3))) { sum += id(g_momentary_active_export_l3); have = true; }
+              if (have) id(g_momentary_active_export) = sum;
+            }
+
             // Water / heat
-            if (extract_numeric(telegram, "0-1:24.2.1(", v)) {
+            if (extract_last_numeric(telegram, "0-1:24.2.1(", v)) {
               float old_v = id(g_hot_water_volume);
               float diff = v - old_v;
-              if (isnan(old_v) || (diff >= -0.0005f && diff <= 0.03f)) {
+              if (isnan(old_v) || (diff >= -0.0005f && diff <= 0.05f)) {
                 id(g_hot_water_volume) = v;
               } else {
                 ESP_LOGW("p1", "Discarded hot water volume jump: old=%.6f new=%.6f diff=%.6f",
@@ -183,24 +242,33 @@ uart:
             if (extract_numeric(telegram, "0-1:24.2.5(", v)) id(g_energy_content_volume) = v;
             if (extract_numeric(telegram, "0-1:24.2.6(", v)) id(g_energy_flow_rate) = v;
 
-            // Meter ID
-            if (extract_numeric(telegram, "0-0:96.1.0(", v)) id(g_meter_id) = v;
-
             ESP_LOGD(
               "p1",
-              "parsed import=%.3f kWh power=%.3f kW volt_l1=%.1f V current_l1=%.1f A water=%.3f m3 flow=%.3f m3/h meter=%.0f",
+              "parsed import=%.3f kWh power=%.3f kW volt_l1=%.1f V current_l1=%.1f A water=%.3f m3 flow=%.3f m3/h meter=%s",
               id(g_cumulative_active_import),
               id(g_momentary_active_import),
               id(g_voltage_l1),
               id(g_current_l1),
               id(g_hot_water_volume),
               id(g_hot_water_flow_rate),
-              id(g_meter_id)
+              id(g_meter_id_text).c_str()
             );
-          }
 
 globals:
   - id: p1_buffer
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+  - id: g_telegram_timestamp
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+  - id: g_meter_id_text
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+  - id: g_hot_water_meter_id
     type: std::string
     restore_value: no
     initial_value: '""'
@@ -339,11 +407,6 @@ globals:
     restore_value: no
     initial_value: 'NAN'
 
-  - id: g_meter_id
-    type: float
-    restore_value: no
-    initial_value: 'NAN'
-
 sensor:
   - platform: uptime
     name: "Uptime"
@@ -374,6 +437,7 @@ sensor:
     name: "Cumulative Reactive Import"
     unit_of_measurement: kvarh
     accuracy_decimals: 3
+    state_class: total_increasing
     lambda: return id(g_cumulative_reactive_import);
     update_interval: 30s
 
@@ -381,6 +445,7 @@ sensor:
     name: "Cumulative Reactive Export"
     unit_of_measurement: kvarh
     accuracy_decimals: 3
+    state_class: total_increasing
     lambda: return id(g_cumulative_reactive_export);
     update_interval: 30s
 
@@ -406,6 +471,7 @@ sensor:
     name: "Momentary Reactive Import"
     unit_of_measurement: kvar
     accuracy_decimals: 3
+    state_class: measurement
     lambda: return id(g_momentary_reactive_import);
     update_interval: 30s
 
@@ -413,6 +479,7 @@ sensor:
     name: "Momentary Reactive Export"
     unit_of_measurement: kvar
     accuracy_decimals: 3
+    state_class: measurement
     lambda: return id(g_momentary_reactive_export);
     update_interval: 30s
 
@@ -474,6 +541,7 @@ sensor:
     name: "Momentary Reactive Import Phase 1"
     unit_of_measurement: kvar
     accuracy_decimals: 3
+    state_class: measurement
     lambda: return id(g_momentary_reactive_import_l1);
     update_interval: 30s
 
@@ -481,6 +549,7 @@ sensor:
     name: "Momentary Reactive Export Phase 1"
     unit_of_measurement: kvar
     accuracy_decimals: 3
+    state_class: measurement
     lambda: return id(g_momentary_reactive_export_l1);
     update_interval: 30s
 
@@ -488,6 +557,7 @@ sensor:
     name: "Momentary Reactive Import Phase 2"
     unit_of_measurement: kvar
     accuracy_decimals: 3
+    state_class: measurement
     lambda: return id(g_momentary_reactive_import_l2);
     update_interval: 30s
 
@@ -495,6 +565,7 @@ sensor:
     name: "Momentary Reactive Export Phase 2"
     unit_of_measurement: kvar
     accuracy_decimals: 3
+    state_class: measurement
     lambda: return id(g_momentary_reactive_export_l2);
     update_interval: 30s
 
@@ -502,6 +573,7 @@ sensor:
     name: "Momentary Reactive Import Phase 3"
     unit_of_measurement: kvar
     accuracy_decimals: 3
+    state_class: measurement
     lambda: return id(g_momentary_reactive_import_l3);
     update_interval: 30s
 
@@ -509,6 +581,7 @@ sensor:
     name: "Momentary Reactive Export Phase 3"
     unit_of_measurement: kvar
     accuracy_decimals: 3
+    state_class: measurement
     lambda: return id(g_momentary_reactive_export_l3);
     update_interval: 30s
 
@@ -606,7 +679,7 @@ sensor:
     name: "Hot Water Energy Content Volume"
     unit_of_measurement: kWh
     accuracy_decimals: 3
-    state_class: measurement
+    state_class: total_increasing
     device_class: energy
     lambda: return id(g_energy_content_volume);
     update_interval: 30s
@@ -620,13 +693,25 @@ sensor:
     lambda: return id(g_energy_flow_rate);
     update_interval: 30s
 
+text_sensor:
   - platform: template
-    name: "Meter ID"
-    accuracy_decimals: 0
-    lambda: return id(g_meter_id);
+    name: "Telegram Timestamp Raw"
+    lambda: |-
+      return id(g_telegram_timestamp);
     update_interval: 30s
 
-text_sensor:
+  - platform: template
+    name: "Meter ID"
+    lambda: |-
+      return id(g_meter_id_text);
+    update_interval: 30s
+
+  - platform: template
+    name: "Hot Water Meter ID"
+    lambda: |-
+      return id(g_hot_water_meter_id);
+    update_interval: 30s
+
   - platform: wifi_info
     ip_address:
       name: "IP Address"
