@@ -87,6 +87,7 @@ If `1-0:1.7.0` or `1-0:2.7.0` are missing, total active power is automatically c
 
 ### Duplicate `0-1:24.2.1(...)`
 Some newer meters send two lines like this:
+I assume the first is the date then other is the mesurement.
 
 ```text
 0-1:24.2.1(260610074440)
