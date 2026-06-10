@@ -30,22 +30,6 @@ This project parses the P1 serial telegram directly in YAML and exposes the valu
   - `state_class`
   - units of measurement
 
-## Why this version exists
-
-Newer Veitur / P1 telegrams changed format compared to older published examples.
-
-Important changes seen in newer telegrams:
-
-- UART format changed from older settings to **115200 8N1**
-- Some meters no longer send total active power OBIS values like:
-  - `1-0:1.7.0`
-  - `1-0:2.7.0`
-- Some water telegrams now send `0-1:24.2.1(...)` **twice**
-  - first occurrence = timestamp-like value
-  - second occurrence = actual water volume in `m3`
-
-This YAML handles those changes.
-
 ## Supported OBIS values
 
 ### Electricity totals
