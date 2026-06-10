@@ -1,4 +1,4 @@
-# ESPHome Veitur / P1 Meter Reader
+# ESPHome Icelandic - Veitur / P1 Meter Reader Electric and Hotwater
 
 ESPHome YAML configuration for reading electricity and hot water data from a Veitur-style P1 meter on an ESP8266.
 
