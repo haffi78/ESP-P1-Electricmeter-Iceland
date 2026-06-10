@@ -253,6 +253,7 @@ uart:
               id(g_hot_water_flow_rate),
               id(g_meter_id_text).c_str()
             );
+          }
 
 globals:
   - id: p1_buffer
@@ -264,10 +265,12 @@ globals:
     type: std::string
     restore_value: no
     initial_value: '""'
+
   - id: g_meter_id_text
     type: std::string
     restore_value: no
     initial_value: '""'
+
   - id: g_hot_water_meter_id
     type: std::string
     restore_value: no
