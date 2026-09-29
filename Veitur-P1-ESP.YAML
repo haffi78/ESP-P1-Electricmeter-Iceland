@@ -463,7 +463,7 @@ globals:
     restore_value: no
     initial_value: 'NAN'
 
-  -  - id: g_hot_water_volume
+  - id: g_hot_water_volume
     type: float
     restore_value: no
     initial_value: 'NAN'
