@@ -224,15 +224,93 @@ uart:
               if (have) id(g_momentary_active_export) = sum;
             }
 
-            // Water / heat
+                        // Water / heat
+            //
+            // Normal increases up to 0.05 m3 are accepted immediately.
+            // Larger jumps are accepted after 3 consecutive readings
+            // confirm that the meter is really in the new range.
             if (extract_last_numeric(telegram, "0-1:24.2.1(", v)) {
               float old_v = id(g_hot_water_volume);
-              float diff = v - old_v;
-              if (isnan(old_v) || (diff >= -0.0005f && diff <= 0.05f)) {
+
+              if (isnan(old_v)) {
+                // First reading after boot.
                 id(g_hot_water_volume) = v;
+                id(g_hot_water_candidate) = NAN;
+                id(g_hot_water_candidate_count) = 0;
+
               } else {
-                ESP_LOGW("p1", "Discarded hot water volume jump: old=%.6f new=%.6f diff=%.6f",
-                         old_v, v, diff);
+                float diff = v - old_v;
+
+                if (diff >= -0.0005f && diff <= 0.05f) {
+                  // Normal increase.
+                  id(g_hot_water_volume) = v;
+                  id(g_hot_water_candidate) = NAN;
+                  id(g_hot_water_candidate_count) = 0;
+
+                } else if (diff > 0.05f) {
+                  // Large forward jump. Confirm it with 3 readings.
+                  float candidate = id(g_hot_water_candidate);
+
+                  if (isnan(candidate)) {
+                    id(g_hot_water_candidate) = v;
+                    id(g_hot_water_candidate_count) = 1;
+
+                    ESP_LOGW(
+                      "p1",
+                      "Hot water volume jump: old=%.3f new=%.3f - confirmation 1/3",
+                      old_v, v
+                    );
+
+                  } else {
+                    float candidate_diff = v - candidate;
+
+                    if (candidate_diff >= -0.0005f && candidate_diff <= 0.05f) {
+                      id(g_hot_water_candidate) = v;
+                      id(g_hot_water_candidate_count)++;
+
+                      ESP_LOGW(
+                        "p1",
+                        "Hot water volume jump confirmation %d/3: %.3f",
+                        id(g_hot_water_candidate_count), v
+                      );
+
+                      if (id(g_hot_water_candidate_count) >= 3) {
+                        ESP_LOGW(
+                          "p1",
+                          "Hot water volume re-synchronized: %.3f -> %.3f",
+                          old_v, v
+                        );
+
+                        id(g_hot_water_volume) = v;
+                        id(g_hot_water_candidate) = NAN;
+                        id(g_hot_water_candidate_count) = 0;
+                      }
+
+                    } else {
+                      // Candidate readings were not consistent.
+                      // Start again using this reading.
+                      id(g_hot_water_candidate) = v;
+                      id(g_hot_water_candidate_count) = 1;
+
+                      ESP_LOGW(
+                        "p1",
+                        "Hot water jump confirmation restarted at %.3f",
+                        v
+                      );
+                    }
+                  }
+
+                } else {
+                  // Significant backwards movement is invalid.
+                  ESP_LOGW(
+                    "p1",
+                    "Discarded backwards hot water volume: old=%.3f new=%.3f",
+                    old_v, v
+                  );
+
+                  id(g_hot_water_candidate) = NAN;
+                  id(g_hot_water_candidate_count) = 0;
+                }
               }
             }
 
