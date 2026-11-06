@@ -114,9 +114,6 @@ Compare the raw `1-0:1.8.0(...*kWh)` row, the `parsed import` log, the
 in Home Assistant. If the Home Assistant state increases, check the dashboard's
 selected entity and Recorder/statistics before changing UART settings.
 
-See the [November 2026 investigation](docs/energy-investigation-2026-11.md) for
-the supplied live evidence, remaining checks, and external references.
-
 ## Parser regression tests
 
 Run `python3 -m unittest discover -s tests -v` with `clang++` or `g++` installed.
