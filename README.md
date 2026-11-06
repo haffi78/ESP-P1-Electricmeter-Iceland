@@ -92,3 +92,34 @@ I assume the first is the date then other is the mesurement.
 ```text
 0-1:24.2.1(260610074440)
 0-1:24.2.1(1766.296*m3)
+```
+
+### Cumulative electricity import recovery
+
+Normal increases up to 0.20 kWh are accepted immediately. A larger forward
+jump is held until three consecutive telegrams report totals in the new range,
+with each candidate increasing by at most 0.20 kWh (allowing the existing
+0.0005 kWh rounding tolerance). This lets the reader recover after missed
+readings without publishing an isolated spike. Backward readings are rejected.
+A missing import row, a normal reading, or a rejected backward reading clears
+pending confirmation. Inconsistent candidates restart confirmation.
+
+The previous implementation could permanently retain an old import total once
+the meter was more than 0.20 kWh ahead, even while serial telegrams kept arriving.
+
+## Troubleshooting Energy graphs
+
+Compare the raw `1-0:1.8.0(...*kWh)` row, the `parsed import` log, the
+`Cumulative Active Import` sensor publication, and that entity's numeric state
+in Home Assistant. If the Home Assistant state increases, check the dashboard's
+selected entity and Recorder/statistics before changing UART settings.
+
+See the [November 2026 investigation](docs/energy-investigation-2026-11.md) for
+the supplied live evidence, remaining checks, and external references.
+
+## Parser regression tests
+
+Run `python3 -m unittest discover -s tests -v` with `clang++` or `g++` installed.
+The tests compile and execute the actual UART parser and cumulative import
+sensor lambda from this YAML. They do not validate the full ESPHome configuration
+or test the hardware/native API.

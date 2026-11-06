@@ -10,7 +10,6 @@ esp8266:
 
 logger:
   baud_rate: 0
-  esp8266_store_log_strings_in_flash: false
   level: DEBUG
 
 api:
@@ -155,10 +154,37 @@ uart:
               float diff = v - old_v;
               if (isnan(old_v) || (diff >= -0.0005f && diff <= 0.20f)) {
                 id(g_cumulative_active_import) = v;
+                id(g_import_candidate) = NAN;
+                id(g_import_candidate_count) = 0;
+              } else if (diff > 0.20f) {
+                // A missed telegram can leave a valid total more than 0.20 kWh
+                // ahead forever. Confirm a new range before re-synchronizing.
+                float candidate = id(g_import_candidate);
+                float candidate_diff = v - candidate;
+                if (!isnan(candidate) && candidate_diff >= -0.0005f && candidate_diff <= 0.20f) {
+                  id(g_import_candidate_count)++;
+                } else {
+                  id(g_import_candidate_count) = 1;
+                }
+                id(g_import_candidate) = v;
+                ESP_LOGW("p1", "Cumulative import jump: old=%.3f new=%.3f - confirmation %d/3",
+                         old_v, v, id(g_import_candidate_count));
+                if (id(g_import_candidate_count) >= 3) {
+                  id(g_cumulative_active_import) = v;
+                  id(g_import_candidate) = NAN;
+                  id(g_import_candidate_count) = 0;
+                  ESP_LOGW("p1", "Cumulative import re-synchronized: %.3f -> %.3f kWh", old_v, v);
+                }
               } else {
                 ESP_LOGW("p1", "Discarded cumulative import jump: old=%.6f new=%.6f diff=%.6f",
                          old_v, v, diff);
+                id(g_import_candidate) = NAN;
+                id(g_import_candidate_count) = 0;
               }
+            } else {
+              // Confirmation requires consecutive telegrams containing import.
+              id(g_import_candidate) = NAN;
+              id(g_import_candidate_count) = 0;
             }
 
             if (extract_numeric(telegram, "1-0:2.8.0(", v)) id(g_cumulative_active_export) = v;
@@ -358,6 +384,14 @@ globals:
     type: float
     restore_value: no
     initial_value: 'NAN'
+  - id: g_import_candidate
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+  - id: g_import_candidate_count
+    type: int
+    restore_value: no
+    initial_value: '0'
   - id: g_cumulative_active_export
     type: float
     restore_value: no
